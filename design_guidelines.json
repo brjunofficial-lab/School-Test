@@ -1,0 +1,151 @@
+{
+  "identity": {
+    "name": "E1",
+    "role": "Anti-AI Designer",
+    "mission": "Create a top 1% educational platform that feels human, engaging, and distinct from generic SaaS templates.",
+    "principles": [
+      "Fusion over Imitation: Mix academic rigor with playful discovery.",
+      "Emotion First: Design for confidence and focus, not just utility.",
+      "Content is King: Every screen tells a story of progress.",
+      "Zoom In: Focus on the details that matter (e.g., the exam timer, the submit button).",
+      "Negative Space: Let the content breathe."
+    ]
+  },
+  "theme_strategy": {
+    "mode": "light",
+    "rationale": "Light mode promotes clarity and focus for reading-heavy tasks like exams. Dark mode elements will be used for high-contrast 'Focus Mode' during actual test-taking.",
+    "archetype": "Vibrant Play (Refined)",
+    "vibe": "Optimistic, Focused, Modern, Trustworthy."
+  },
+  "colors": {
+    "primary": {
+      "name": "Academic Indigo",
+      "hex": "#4F46E5",
+      "tailwind": "indigo-600",
+      "usage": "Primary actions, active states, brand anchor."
+    },
+    "secondary": {
+      "name": "Growth Teal",
+      "hex": "#0D9488",
+      "tailwind": "teal-600",
+      "usage": "Success states, progress indicators, positive reinforcement."
+    },
+    "accent": {
+      "name": "Energy Orange",
+      "hex": "#F59E0B",
+      "tailwind": "amber-500",
+      "usage": "Highlights, warnings, 'streak' counters, gamification elements."
+    },
+    "background": {
+      "page": "#F8FAFC",
+      "card": "#FFFFFF",
+      "subtle": "#F1F5F9"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#94A3B8"
+    },
+    "gradients": {
+      "hero": "bg-gradient-to-br from-indigo-50 to-teal-50",
+      "card_hover": "hover:bg-gradient-to-br hover:from-white hover:to-indigo-50/30"
+    }
+  },
+  "typography": {
+    "headings": {
+      "family": "Plus Jakarta Sans",
+      "weights": ["600", "700", "800"],
+      "usage": "All section headers, page titles, and hero text. DO NOT use Inter.",
+      "letter_spacing": "tracking-tight"
+    },
+    "body": {
+      "family": "Inter",
+      "weights": ["400", "500"],
+      "usage": "Paragraphs, inputs, data tables."
+    },
+    "mono": {
+      "family": "JetBrains Mono",
+      "usage": "Math equations, code snippets, exam timers."
+    }
+  },
+  "layout_system": {
+    "spacing": {
+      "base": "Generous. Use p-6 or p-8 where others use p-4.",
+      "container_padding": "px-4 md:px-8 lg:px-12",
+      "section_gap": "gap-8 md:gap-12"
+    },
+    "grids": {
+      "dashboard": "Bento Grid (Mode A). Mix of col-span-1, col-span-2, and row-span-2 items.",
+      "exam_list": "Grid of cards (grid-cols-1 md:grid-cols-2 lg:grid-cols-3).",
+      "exam_taking": "Split screen (Question Left / Answer Right) or Single Column Focus."
+    },
+    "containers": {
+      "card_style": "bg-white rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300",
+      "glass_panel": "bg-white/80 backdrop-blur-xl border border-white/20 shadow-lg"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "rounded-full px-8 py-3 font-semibold shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 transition-all active:scale-95",
+      "secondary": "rounded-full px-6 py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300",
+      "ghost": "rounded-lg px-4 py-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+    },
+    "inputs": {
+      "style": "rounded-lg border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-all"
+    },
+    "cards": {
+      "dashboard_widget": "rounded-2xl bg-white border border-slate-100 p-6 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)]"
+    },
+    "navigation": {
+      "sidebar": "Fixed left, clean icons, active state: bg-indigo-50 text-indigo-600 border-r-2 border-indigo-600",
+      "mobile_nav": "Bottom sheet or floating pill menu."
+    }
+  },
+  "visual_enhancers": {
+    "textures": "Subtle noise overlay on solid backgrounds to reduce digital flatness.",
+    "shadows": "Colored shadows (e.g., shadow-indigo-500/10) for a premium feel.",
+    "borders": "1px solid borders with very light opacity (slate-200) for structure.",
+    "decorations": "Abstract geometric shapes (circles, pills) in background with low opacity (blur-3xl)."
+  },
+  "motion": {
+    "page_transition": "initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.3 }}",
+    "hover_effects": "scale-[1.02] -translate-y-1",
+    "list_stagger": "staggerChildren: 0.1"
+  },
+  "images": {
+    "hero_student": {
+      "url": "https://images.unsplash.com/photo-1704748082631-84621da1dc59?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHwzfHxzdHVkZW50JTIwc3R1ZHlpbmclMjBsYXB0b3B8ZW58MHx8fHwxNzY5Mjc2MDMyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Student using stylus on tablet",
+      "usage": "Landing page hero or student dashboard welcome."
+    },
+    "teacher_grading": {
+      "url": "https://images.pexels.com/photos/5212703/pexels-photo-5212703.jpeg",
+      "alt": "Teacher grading on tablet",
+      "usage": "Teacher dashboard or features section."
+    },
+    "abstract_bg": {
+      "url": "https://images.unsplash.com/photo-1576903386142-0ce309b5e450?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGdlb21ldHJpYyUyMHNoYXBlcyUyMGVkdWNhdGlvbnxlbnwwfHx8fDE3NjkyNzYwMzV8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Geometric abstract shapes",
+      "usage": "Background patterns or card headers."
+    }
+  },
+  "anti_patterns": [
+    "NO generic 'Bootstrap' look.",
+    "NO pure black (#000000) text.",
+    "NO default blue links.",
+    "NO 'Inter' font for headings.",
+    "NO dense, cluttered grids without breathing room."
+  ],
+  "instructions_to_main_agent": {
+    "general": "You are building a high-end educational platform. It should feel like a modern consumer app (like Duolingo or Masterclass), not a boring LMS.",
+    "setup": "Install 'lucide-react' for icons, 'framer-motion' for animations, 'recharts' for charts, and 'clsx'/'tailwind-merge' for class handling.",
+    "fonts": "Import 'Plus Jakarta Sans' and 'JetBrains Mono' from Google Fonts. Use 'Inter' as default sans.",
+    "styling": "Use Tailwind arbitrary values sparingly. Rely on the theme configuration.",
+    "accessibility": "Ensure all text has sufficient contrast. Use semantic HTML."
+  },
+  "universal_guidelines": {
+    "css_reset": "Ensure box-sizing: border-box; and smooth scrolling.",
+    "interaction": "All interactive elements must have a hover and focus state.",
+    "testing": "Add data-testid to all buttons, inputs, and major containers."
+  }
+}
