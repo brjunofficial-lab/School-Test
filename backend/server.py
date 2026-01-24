@@ -184,7 +184,7 @@ def create_token(user_id: str, role: str) -> str:
 def generate_student_code() -> str:
     return f"STD{str(uuid.uuid4())[:8].upper()}"
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> Dict[str, Any]:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     try:
         token = credentials.credentials
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
