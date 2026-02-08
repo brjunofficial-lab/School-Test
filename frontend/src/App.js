@@ -8,6 +8,7 @@ import Signup from '@/pages/Signup';
 import StudentDashboard from '@/pages/StudentDashboard';
 import ParentDashboard from '@/pages/ParentDashboard';
 import TeacherDashboard from '@/pages/TeacherDashboard';
+import SuperAdminDashboard from '@/pages/SuperAdminDashboard';
 import TakeTest from '@/pages/TakeTest';
 import TestResults from '@/pages/TestResults';
 import CreateTest from '@/pages/CreateTest';
@@ -128,6 +129,15 @@ function App() {
             element={
               <ProtectedRoute role="teacher">
                 <CreateTest user={user} />
+              </ProtectedRoute>
+            } 
+          />
+          
+          <Route 
+            path="/admin/dashboard" 
+            element={
+              <ProtectedRoute role="super_admin">
+                <SuperAdminDashboard user={user} />
               </ProtectedRoute>
             } 
           />
