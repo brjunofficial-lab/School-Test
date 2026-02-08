@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, File, UploadFile, Form, status
 from fastapi.security import HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -16,19 +16,31 @@ import jwt
 import base64
 from io import BytesIO
 from PIL import Image
+import pytesseract
+import pandas as pd
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 import asyncio
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# CRITICAL: Strict JWT_SECRET enforcement - no fallback
+JWT_SECRET = os.environ.get('JWT_SECRET')
+if not JWT_SECRET or len(JWT_SECRET) < 32:
+    raise RuntimeError(
+        "CRITICAL: JWT_SECRET must be set in .env file and be at least 32 characters long. "
+        "Application cannot start without a secure JWT secret."
+    )
+
 # MongoDB connection
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+mongo_url = os.environ.get('MONGO_URL')
+if not mongo_url:
+    raise RuntimeError("CRITICAL: MONGO_URL must be set in .env file")
+
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ.get('DB_NAME', 'test_database')]
 
 # JWT Configuration
-JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production-min-32-chars-long')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 JWT_EXPIRATION = int(os.environ.get('JWT_EXPIRATION_MINUTES', 10080))
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
@@ -47,6 +59,7 @@ class UserRole:
     STUDENT = "student"
     PARENT = "parent"
     TEACHER = "teacher"
+    SUPER_ADMIN = "super_admin"
 
 class UserSignup(BaseModel):
     name: str
@@ -82,6 +95,7 @@ class User(BaseModel):
     parent_name: Optional[str] = None
     parent_mobile: Optional[str] = None
     parent_email: Optional[EmailStr] = None
+    is_active: bool = True
     created_at: str
 
 class SubjectCreate(BaseModel):
@@ -110,6 +124,18 @@ class Question(BaseModel):
     correct_answer: Optional[str] = None
     marks: int = 1
     match_pairs: Optional[Dict[str, str]] = None
+
+class MasterQuestion(BaseModel):
+    id: str
+    question_text: str
+    question_type: str
+    subject: str
+    class_name: str
+    options: Optional[List[str]] = None
+    correct_answer: Optional[str] = None
+    marks: int = 1
+    difficulty: str = "medium"
+    created_at: str
 
 class TestType:
     CHAPTER = "chapter"
@@ -165,6 +191,14 @@ class TestResult(BaseModel):
     submitted_at: str
     evaluated: bool = False
 
+class UserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
+
+class BulkQuestionUpload(BaseModel):
+    subject: str
+    class_name: str
+
 # ============= HELPER FUNCTIONS =============
 
 def hash_password(password: str) -> str:
@@ -188,33 +222,53 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         token = credentials.credentials
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        
+        # Check if user is active
+        user = await db.users.find_one({"id": payload['user_id']}, {"_id": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        if not user.get('is_active', True):
+            raise HTTPException(status_code=403, detail="Account has been deactivated")
+        
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-async def extract_text_from_image(image_base64: str) -> str:
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"ocr_{uuid.uuid4()}",
-            system_message="You are an OCR system. Extract all text from the image exactly as written. Return only the extracted text, no additional commentary."
-        ).with_model("openai", "gpt-4o")
-        
-        image_content = ImageContent(image_base64=image_base64)
-        message = UserMessage(
-            text="Extract all handwritten text from this image.",
-            file_contents=[image_content]
+async def get_super_admin(current_user: Dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """Middleware to ensure only super_admin can access certain endpoints"""
+    if current_user['role'] != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied. Super admin privileges required."
         )
+    return current_user
+
+async def extract_text_from_image(image_base64: str) -> str:
+    """
+    REFACTORED: Cost-optimized OCR using pytesseract (open-source)
+    Only use LLM for grading, not for text extraction
+    """
+    try:
+        # Decode base64 image
+        image_data = base64.b64decode(image_base64)
+        image = Image.open(BytesIO(image_data))
         
-        response = await chat.send_message(message)
-        return response
+        # Use Tesseract OCR (free, open-source)
+        extracted_text = pytesseract.image_to_string(image)
+        
+        # Clean up the text
+        extracted_text = extracted_text.strip()
+        
+        logger.info(f"OCR extraction successful: {len(extracted_text)} characters")
+        return extracted_text
     except Exception as e:
         logger.error(f"OCR error: {e}")
         return ""
 
 async def evaluate_answer(question: str, correct_answer: str, student_answer: str, marks: int) -> float:
+    """AI evaluation using LLM - kept for grading logic only"""
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
@@ -233,6 +287,41 @@ async def evaluate_answer(question: str, correct_answer: str, student_answer: st
         logger.error(f"Evaluation error: {e}")
         return 0.0
 
+# ============= STARTUP: CREATE INDEXES FOR SCALABILITY =============
+
+@app.on_event("startup")
+async def create_indexes():
+    """Create MongoDB indexes for production scalability (5000+ users)"""
+    try:
+        # User indexes
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("id")
+        await db.users.create_index([("role", 1), ("is_active", 1)])
+        await db.users.create_index("student_code")
+        
+        # Test indexes
+        await db.tests.create_index("id")
+        await db.tests.create_index([("class_name", 1), ("test_type", 1)])
+        await db.tests.create_index("created_by")
+        
+        # Test results indexes for fast student dashboard queries
+        await db.test_results.create_index("id")
+        await db.test_results.create_index("student_id")
+        await db.test_results.create_index([("student_id", 1), ("submitted_at", -1)])
+        
+        # Master question bank indexes
+        await db.master_questions.create_index("id")
+        await db.master_questions.create_index([("subject", 1), ("class_name", 1)])
+        await db.master_questions.create_index([("difficulty", 1), ("question_type", 1)])
+        
+        # Subject indexes
+        await db.subjects.create_index("id")
+        await db.subjects.create_index("class_name")
+        
+        logger.info("✅ Database indexes created successfully for scalability")
+    except Exception as e:
+        logger.error(f"Error creating indexes: {e}")
+
 # ============= AUTH ROUTES =============
 
 @api_router.post("/auth/signup", response_model=User)
@@ -244,6 +333,7 @@ async def signup(user_data: UserSignup):
     user_dict = user_data.model_dump()
     user_dict['id'] = str(uuid.uuid4())
     user_dict['created_at'] = datetime.now(timezone.utc).isoformat()
+    user_dict['is_active'] = True
     
     if user_data.role == UserRole.STUDENT:
         user_dict['student_code'] = generate_student_code()
@@ -261,6 +351,9 @@ async def login(credentials: UserLogin):
     if not user or not verify_password(credentials.password, user['password']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
+    if not user.get('is_active', True):
+        raise HTTPException(status_code=403, detail="Account has been deactivated. Contact administrator.")
+    
     token = create_token(user['id'], user['role'])
     user.pop('password')
     
@@ -276,11 +369,198 @@ async def get_me(current_user: Dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="User not found")
     return User(**user)
 
+# ============= SUPER ADMIN ROUTES =============
+
+@api_router.get("/admin/users", dependencies=[Depends(get_super_admin)])
+async def get_all_users(
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 100
+):
+    """Get paginated list of all users - Super Admin only"""
+    query = {}
+    if role:
+        query['role'] = role
+    if is_active is not None:
+        query['is_active'] = is_active
+    
+    total_count = await db.users.count_documents(query)
+    users = await db.users.find(query, {"_id": 0, "password": 0}).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "total": total_count,
+        "users": users,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.patch("/admin/users/{user_id}", dependencies=[Depends(get_super_admin)])
+async def update_user(user_id: str, update_data: UserUpdate):
+    """Update user (reset password, toggle active status) - Super Admin only"""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_fields = {}
+    if update_data.is_active is not None:
+        update_fields['is_active'] = update_data.is_active
+    
+    if update_data.password:
+        update_fields['password'] = hash_password(update_data.password)
+    
+    if update_fields:
+        await db.users.update_one({"id": user_id}, {"$set": update_fields})
+    
+    updated_user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    return {"message": "User updated successfully", "user": updated_user}
+
+@api_router.post("/admin/questions/bulk-upload", dependencies=[Depends(get_super_admin)])
+async def bulk_upload_questions(
+    file: UploadFile = File(...),
+    subject: str = Form(...),
+    class_name: str = Form(...)
+):
+    """
+    Bulk upload questions from CSV/Excel file - Super Admin only
+    Expected columns: question_text, question_type, options (JSON/comma-separated), 
+                     correct_answer, marks, difficulty
+    """
+    try:
+        contents = await file.read()
+        
+        # Read file based on extension
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(BytesIO(contents))
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(BytesIO(contents))
+        else:
+            raise HTTPException(status_code=400, detail="File must be CSV or Excel (.xlsx, .xls)")
+        
+        # Validate required columns
+        required_cols = ['question_text', 'question_type', 'correct_answer', 'marks']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required columns: {', '.join(missing_cols)}"
+            )
+        
+        # Process and insert questions
+        questions = []
+        for _, row in df.iterrows():
+            question_dict = {
+                'id': str(uuid.uuid4()),
+                'question_text': str(row['question_text']),
+                'question_type': str(row['question_type']).lower(),
+                'subject': subject,
+                'class_name': class_name,
+                'correct_answer': str(row['correct_answer']),
+                'marks': int(row['marks']),
+                'difficulty': str(row.get('difficulty', 'medium')).lower(),
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Handle options for MCQ
+            if question_dict['question_type'] == 'mcq' and 'options' in row:
+                options_str = str(row['options'])
+                if options_str.startswith('['):
+                    import json
+                    question_dict['options'] = json.loads(options_str)
+                else:
+                    question_dict['options'] = [opt.strip() for opt in options_str.split(',')]
+            
+            questions.append(question_dict)
+        
+        if questions:
+            result = await db.master_questions.insert_many(questions)
+            return {
+                "message": f"Successfully uploaded {len(questions)} questions",
+                "count": len(questions)
+            }
+        else:
+            raise HTTPException(status_code=400, detail="No valid questions found in file")
+            
+    except Exception as e:
+        logger.error(f"Bulk upload error: {e}")
+        raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+@api_router.get("/admin/questions/master-bank", dependencies=[Depends(get_super_admin)])
+async def get_master_question_bank(
+    subject: Optional[str] = None,
+    class_name: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100
+):
+    """Get questions from master bank with filters - Super Admin only"""
+    query = {}
+    if subject:
+        query['subject'] = subject
+    if class_name:
+        query['class_name'] = class_name
+    if difficulty:
+        query['difficulty'] = difficulty
+    
+    total_count = await db.master_questions.count_documents(query)
+    questions = await db.master_questions.find(query, {"_id": 0}).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "total": total_count,
+        "questions": questions,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/stats", dependencies=[Depends(get_super_admin)])
+async def get_admin_stats():
+    """Get platform statistics - Super Admin only"""
+    total_students = await db.users.count_documents({"role": UserRole.STUDENT})
+    total_teachers = await db.users.count_documents({"role": UserRole.TEACHER})
+    total_tests = await db.tests.count_documents({})
+    total_submissions = await db.test_results.count_documents({})
+    active_users = await db.users.count_documents({"is_active": True})
+    master_questions = await db.master_questions.count_documents({})
+    
+    return {
+        "total_students": total_students,
+        "total_teachers": total_teachers,
+        "total_tests": total_tests,
+        "total_submissions": total_submissions,
+        "active_users": active_users,
+        "master_questions": master_questions
+    }
+
+# ============= TEACHER: PULL FROM MASTER BANK =============
+
+@api_router.get("/questions/master-bank")
+async def get_master_questions_for_teachers(
+    current_user: Dict = Depends(get_current_user),
+    subject: Optional[str] = None,
+    class_name: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    limit: int = 50
+):
+    """Teachers can pull questions from master bank"""
+    if current_user['role'] not in [UserRole.TEACHER, UserRole.SUPER_ADMIN]:
+        raise HTTPException(status_code=403, detail="Only teachers can access question bank")
+    
+    query = {}
+    if subject:
+        query['subject'] = subject
+    if class_name:
+        query['class_name'] = class_name
+    if difficulty:
+        query['difficulty'] = difficulty
+    
+    questions = await db.master_questions.find(query, {"_id": 0}).limit(limit).to_list(limit)
+    return questions
+
 # ============= SUBJECT ROUTES =============
 
 @api_router.post("/subjects", response_model=Subject)
 async def create_subject(subject_data: SubjectCreate, current_user: Dict = Depends(get_current_user)):
-    if current_user['role'] != UserRole.TEACHER:
+    if current_user['role'] not in [UserRole.TEACHER, UserRole.SUPER_ADMIN]:
         raise HTTPException(status_code=403, detail="Only teachers can create subjects")
     
     subject_dict = subject_data.model_dump()
@@ -300,7 +580,7 @@ async def get_subjects(class_name: Optional[str] = None):
 
 @api_router.post("/tests", response_model=Test)
 async def create_test(test_data: TestCreate, current_user: Dict = Depends(get_current_user)):
-    if current_user['role'] != UserRole.TEACHER:
+    if current_user['role'] not in [UserRole.TEACHER, UserRole.SUPER_ADMIN]:
         raise HTTPException(status_code=403, detail="Only teachers can create tests")
     
     test_dict = test_data.model_dump()
@@ -340,7 +620,7 @@ async def submit_test(test_id: str, submission: TestSubmission, current_user: Di
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
     
-    # Process answers with OCR if needed
+    # Process answers with OCR if needed (using pytesseract now)
     processed_answers = []
     for ans in submission.answers:
         ans_dict = ans.model_dump()
@@ -392,7 +672,12 @@ async def get_student_results(student_id: str, current_user: Dict = Depends(get_
     if current_user['role'] == UserRole.STUDENT and current_user['user_id'] != student_id:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    results = await db.test_results.find({"student_id": student_id}, {"_id": 0}).to_list(1000)
+    # Use indexed query for performance
+    results = await db.test_results.find(
+        {"student_id": student_id}, 
+        {"_id": 0}
+    ).sort("submitted_at", -1).limit(100).to_list(100)
+    
     return [TestResult(**r) for r in results]
 
 @api_router.get("/results/{result_id}", response_model=TestResult)
@@ -427,7 +712,7 @@ async def upload_image(file: UploadFile = File(...)):
         image.save(buffered, format="JPEG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         
-        # Extract text using OCR
+        # Extract text using Tesseract OCR (cost-optimized)
         ocr_text = await extract_text_from_image(img_base64)
         
         return {
@@ -442,7 +727,11 @@ async def upload_image(file: UploadFile = File(...)):
 
 @api_router.get("/analytics/student/{student_id}")
 async def get_student_analytics(student_id: str, current_user: Dict = Depends(get_current_user)):
-    results = await db.test_results.find({"student_id": student_id}, {"_id": 0}).to_list(1000)
+    # Use indexed query for performance
+    results = await db.test_results.find(
+        {"student_id": student_id}, 
+        {"_id": 0, "total_score": 1, "max_score": 1}
+    ).to_list(1000)
     
     if not results:
         return {
@@ -466,7 +755,7 @@ async def get_student_analytics(student_id: str, current_user: Dict = Depends(ge
 
 @api_router.get("/")
 async def root():
-    return {"message": "Educational Examination Platform API"}
+    return {"message": "Educational Examination Platform API - Production Ready", "version": "2.0"}
 
 # Include router
 app.include_router(api_router)
